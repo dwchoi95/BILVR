@@ -36,6 +36,8 @@ class Validation:
         # if distance == 0:
         #     return True
         # return False
+        if llm_patch is None:
+            return False
         return human_patch.strip() == llm_patch.strip()
 
     async def llm_eval(
@@ -45,6 +47,8 @@ class Validation:
         human_patch: str,
         llm_patch: str
     ) -> bool:
+        if llm_patch is None or type(llm_patch)!=str or llm_patch.strip() == "":
+            return False
         pm = PromptManager()
         system = pm.render(file="src/prompts/validation/system.md")
         user = pm.render(
@@ -54,5 +58,5 @@ class Validation:
             human_patch=human_patch,
             llm_patch=llm_patch,
         )
-        model = GPT(model="gpt-5-nano", temperature=1.0)
+        model = GPT(model="gpt-4.1-nano")
         return await model.async_run(system, user)

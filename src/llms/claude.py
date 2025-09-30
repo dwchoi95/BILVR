@@ -1,3 +1,4 @@
+import time
 import anthropic
 from anthropic.types import ToolUseBlock
 
@@ -34,7 +35,7 @@ class CLAUDE:
         result_text = " ".join(response_texts)
         return result_text
 
-    async def async_run(self, system:str, user:str):
+    async def async_run(self, system:str, user:str, max_retries:int=5) -> str | None:
         try:
             response = await self.async_client.messages.create(
                 model=self.model,
@@ -56,6 +57,10 @@ class CLAUDE:
             )
             return self._extract_fixed(response)
         except Exception as e:
-            # print(e)
-            pass
+            # sleep and retry
+            if max_retries > 0:
+                time.sleep(6)
+                return await self.async_run(system, user, max_retries - 1)
+            else:
+                print(e)
         return None

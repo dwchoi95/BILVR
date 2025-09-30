@@ -5,23 +5,16 @@ from src.core import Fixer
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run LLM repair experiments.")
     parser.add_argument(
-        "-e",
-        "--experiment",
-        type=int,
-        default="1",
-        help="Experiment to execute (default: 1).",
-    )
-    parser.add_argument(
         "-d",
         "--dataset",
-        default="data/cvefixes_unique.csv",
+        default="data/derivative/zeroday.csv",
         help="Path to the dataset CSV file.",
     )
     parser.add_argument(
         "-s",
         "--savedir",
         default="results",
-        help="Directory where experiment outputs are stored.",
+        help="Directory where experiment results are stored.",
     )
     parser.add_argument(
         "-m",
@@ -37,10 +30,17 @@ def main() -> None:
         help="Temperature setting for the LLM (default: 0.0).",
     )
     parser.add_argument(
-        "--async_limit",
+        "-l",
+        "--limit",
         type=int,
-        default=1000,
-        help="Maximum number of concurrent asynchronous requests (default: 50).",
+        default=1,
+        help="Maximum Rate limits of LLM API (default: 1).",
+    )
+    parser.add_argument(
+        "-r",
+        "--reset",
+        action="store_true",
+        help="Reset the experiment results.",
     )
 
     args = parser.parse_args()
@@ -50,9 +50,8 @@ def main() -> None:
         temperature=args.temperature,
         dataset_path=args.dataset, 
         save_dir=args.savedir,
-        rq_num=args.experiment,
-        async_limit=args.async_limit)
-    fixer.run()
+        async_limit=args.limit)
+    fixer.run(reset=args.reset)
 
 
 if __name__ == "__main__":

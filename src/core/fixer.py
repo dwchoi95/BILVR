@@ -18,16 +18,15 @@ class Fixer:
         temperature:float,
         dataset_path:str, 
         save_dir:str="results", 
-        rq_num:int=1,
         async_limit:int=1000,
         system_prompt_file:str="src/prompts/repair/system.md",
         user_prompt_file:str="src/prompts/repair/user.md"
     ):
-        filename = Path(dataset_path).stem
-        self.benchmark = filename.split("_")[0]
-        results_dir = Path(save_dir) / f"RQ{rq_num}"
+        self.benchmark = Path(dataset_path).stem
+        results_dir = Path(save_dir)
         results_dir.mkdir(parents=True, exist_ok=True)
-        self.save_path = results_dir / f"{filename}_{llm}.csv"
+        # self.save_path = results_dir / f"{self.benchmark}_{llm}.csv"
+        self.save_path = results_dir / f"{self.benchmark}_gpt-3.5-turbo.csv"
         
         self.model = self._select_model(llm, temperature)
         self.pm = PromptManager()
@@ -35,7 +34,7 @@ class Fixer:
         self.user_prompt_file = user_prompt_file
         self.dataset_df = self._load_data(dataset_path)
         self.columns = self.dataset_df.columns.tolist()
-        self.combinations = self._make_combinations(rq_num)
+        self.combinations = self._make_combinations()
         self.validation = Validation()
         
         self.async_limit = async_limit
@@ -52,34 +51,15 @@ class Fixer:
     def _load_data(self, dataset_path: str) -> pd.DataFrame:
         return pd.read_csv(dataset_path)
 
-    def _make_combinations(self, rq_num:int=1):
-        empty = []
-        cve_info = ["CVE ID", "CVE Description"]
-        cwe_info = ["CWE ID", "CWE Name", "CWE Description", "CWE Example"]
-        vuln_info = ["Vulnerable Lines"]
-        groups = [empty, cve_info, cwe_info, vuln_info]
-        all = sum(groups, [])
-        
-        if rq_num == 1 or rq_num == 3:
-            combinations = [
-                sum(selected_groups, [])
-                for r in range(len(groups))
-                for selected_groups in comb_tools(groups[1:], r)
-            ]
-        elif rq_num == 2 or rq_num == 3:
-            combinations = [
-                list(combo)
-                for r in range(1, len(cwe_info) + 1)
-                for combo in comb_tools(cwe_info, r)
-            ]
-        elif rq_num == 4:
-            combinations = [
-                list(combo)
-                for r in range(len(all) + 1)
-                for combo in comb_tools(all, r)
-            ]
-        else:
-            raise ValueError(f"Unsupported RQ number: {rq_num}")
+    def _make_combinations(self) -> list[list[str]]:
+        groups = ["CVE ID", "CVE Description", 
+                  "CWE ID", "CWE Name", "CWE Description", "CWE Example", 
+                  "Vulnerable Lines"]
+        combinations = [
+            list(combo)
+            for r in range(len(groups) + 1)
+            for combo in comb_tools(groups, r)
+        ]
         return combinations
             
     def _build_selected_information(self, row:pd.Series, comb:list[str]) -> str:
@@ -104,7 +84,7 @@ class Fixer:
         prompt = f"{self.system}\n\n{user}"
         return row_dict, comb, fixed, prompt, duration
 
-    async def __save(self, 
+    async def __evaluation(self, 
         batch:list[asyncio.Task], 
         results:list[dict],
         pbar:tqdm_async
@@ -112,7 +92,7 @@ class Fixer:
         for completed in asyncio.as_completed(batch):
             row_dict, comb, fixed_code, prompt, duration = await completed
             row_dict["LLM Patch"] = fixed_code
-            row_dict["Combination"] = "\n".join(comb) if comb else "None"
+            row_dict["Combination"] = "+".join(comb) if comb else "None"
             row_dict["Prompt"] = prompt
             row_dict["#Input Token"] = self.validation.token_count(prompt)
             row_dict["#Output Token"] = self.validation.token_count(fixed_code)
@@ -138,13 +118,14 @@ class Fixer:
         pbar = tqdm_async(total=total_tasks, desc=self.benchmark)
         batch:list[asyncio.Task] = []
         for _, row in self.dataset_df.iterrows():
-            for comb in self.combinations:
+            combination_set = self.combinations.copy()
+            for comb in combination_set:
                 batch.append(asyncio.create_task(self.__task(row, comb)))
                 if len(batch) >= self.async_limit:
-                    await self.__save(batch, results, pbar)
+                    await self.__evaluation(batch, results, pbar)
                     batch.clear()
         if batch:
-            await self.__save(batch, results, pbar)
+            await self.__evaluation(batch, results, pbar)
         pbar.close()
         
         # Save Repair Results
@@ -163,7 +144,7 @@ class Fixer:
         )
         return row_dict, human_eval
                 
-    async def __validate_save(self,
+    async def __validate_run(self,
         batch:list[asyncio.Task],
         results:list[dict],
         pbar:tqdm_async
@@ -171,7 +152,7 @@ class Fixer:
         for completed in asyncio.as_completed(batch):
             row_dict, human_eval = await completed
             row_dict = dict(row_dict)
-            row_dict["LLM Evalation"] = human_eval
+            row_dict["LLM Evaluation"] = human_eval
             results.append(row_dict)
             pbar.update(1)
     
@@ -182,10 +163,10 @@ class Fixer:
         for _, row in results_df.iterrows():
             batch.append(asyncio.create_task(self._validate_task(row)))
             if len(batch) >= self.async_limit:
-                await self.__validate_save(batch, results, pbar)
+                await self.__validate_run(batch, results, pbar)
                 batch.clear()
         if batch:
-            await self.__validate_save(batch, results, pbar)
+            await self.__validate_run(batch, results, pbar)
         pbar.close()
 
         # Update Validation Results
@@ -193,15 +174,15 @@ class Fixer:
         results_df.to_csv(self.save_path, index=False)
         return results_df
                 
-    async def _async_run(self):
-        results_df = None
-        if os.path.exists(self.save_path):
+    async def _async_run(self, reset:bool=False) -> pd.DataFrame:
+        results_df = pd.DataFrame()
+        if not reset and os.path.exists(self.save_path):
             results_df = pd.read_csv(self.save_path)
         
         total_tasks = len(self.dataset_df) * len(self.combinations)
         
         # Repair
-        if results_df is None or len(results_df) != total_tasks:
+        if results_df.empty or len(results_df) != total_tasks:
             results_df = await self._repair(total_tasks)
         
         # Validation
@@ -209,5 +190,5 @@ class Fixer:
             results_df = await self._validate(results_df)
         return results_df
 
-    def run(self):
-        return asyncio.run(self._async_run())
+    def run(self, reset:bool=False) -> pd.DataFrame:
+        return asyncio.run(self._async_run(reset))
