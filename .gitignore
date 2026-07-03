@@ -142,7 +142,11 @@ dmypy.json
 # SQL
 query/
 *.sql
+!src/data/extract_morefixes.sql
 
 # Custom
-data/
+data/*
+!data/README.md
 results/
+*.zip
+analysis/

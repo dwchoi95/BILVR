@@ -1,84 +1,56 @@
-# Not All Input Helps: What Information Should We Feed to LLMs for Vulnerability Repair?
+# BILVR+ — Does Auxiliary Input Help LLM-Based Vulnerability Repair?
 
-<!-- ![image](./overview.png) -->
-<div align="center">
-  <img src="./overview.png" alt="overview"
-       style="width:clamp(320px, 50%, 900px); height:auto; display:block;" />
-</div>
+A leakage-controlled study of which auxiliary inputs (CVE/CWE identifiers, descriptions, examples, vulnerable-line hints) actually help LLM-based vulnerability repair.
 
-## Installation
+## Download data & results
 
-### Prerequisites
-- Python 3.12+
-- OpenAI API key (for GPT models) and/or Anthropic API key (for Claude models)
-
-### Setup Steps
-
-1. **Clone or navigate to the project directory:**
-   ```bash
-   git clone https://github.com/dwchoi95/BILVR.git
-   cd /path/to/BILVR
-   ```
-
-2. **(Optional) Create and activate virtual environment:**
-   ```bash
-   python3 -m venv env
-   source env/bin/activate  # On Windows: env\Scripts\activate
-   ```
-
-3. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Configure API keys:**
-   Create a `.env` file in the project root with your LLM API keys:
-   ```bash
-   cat > .env << 'EOF'
-   OPENAI_API_KEY="your_openai_api_key_here"
-   CLAUDE_API_KEY="your_claude_api_key_here"
-   EOF
-   ```
-
-## Usage
+`data/` and `results/` are too large for the repo. Download both zips from
+[Google Drive](https://drive.google.com/drive/folders/1KOhE_KB7PdEkDRMpq_Yku7DlcWigckKB?usp=share_link) and unzip at the repo root
+(they extract into `data/` and `results/`):
 
 ```bash
-# Run on NDay vulnerabilities with GPT-3.5-turbo (default)
-python run.py -d data/nday.csv
-
-# Run on ZeroDay vulnerabilities with GPT-3.5-turbo
-python run.py -d data/zeroday.csv
-
-# Run on ZeroDayD vulnerabilities with Claude 3 Haiku
-python run.py -d data/zeroday.csv -m claude-3-haiku-20240307
+unzip data.zip && unzip results.zip
 ```
 
-### Command-line Arguments
+| File | Size | SHA256 |
+| --- | --- | --- |
+| `data.zip` | 188 MB | `76d44b65ad8d6c6310eebbe8d88ed5bb5912273251353558379a1c122d49f67c` |
+| `results.zip` | 3.1 GB | `d80b2fac4a3c7a51edcecffd773e3ddf3f35db16831a08d53988d257cb543f88` |
 
-| Flag | Argument | Default | Description |
-|------|----------|---------|-------------|
-| `-d` | `--dataset` | `data/zeroday.csv` | Path to the dataset CSV file |
-| `-s` | `--savedir` | `results` | Directory for saving experiment results |
-| `-m` | `--model` | `gpt-3.5-turbo` | LLM model identifier (e.g., `gpt-3.5-turbo`, `claude-3-haiku-20240307`) |
-| `-t` | `--temperature` | `0.0` | LLM temperature (0.0 = deterministic, higher = more random) |
-| `-l` | `--limit` | `1` | Max concurrent API requests (for rate limiting) |
-| `-r` | `--reset` | `false` | Reset experiment results and start fresh |
+## Run
 
+```bash
+python3 -m venv env && source env/bin/activate
+pip install -r requirements.txt
+export OPENAI_API_KEY=...   # or CLAUDE_API_KEY / OLLAMA_API_URL / LOCAL_API_URL per backend
 
-## Project Structure
+# Breadth sweep (11 curated input combinations) on both splits
+python run.py -d data/nday_plus.csv    -s results/breadth -m gpt-5.4-nano --backend gpt -c breadth
+python run.py -d data/zeroday_plus.csv -s results/breadth -m gpt-5.4-nano --backend gpt -c breadth
 
+# Depth sweep (all 128 combinations) on the stratified sample
+python run.py -d data/depth_sample.csv -s results/full -m google/gemma-4-E4B-it --backend ollama -c full
+
+# Prompting strategies (zero-shot / few-shot / CoT)
+python run.py -d data/depth_sample.csv -s results/prompting -m google/gemma-4-E4B-it \
+    --backend ollama --prompt-strategies zero-shot few-shot cot
 ```
-BILVR/
-├── data/             # Vulnerability datasets
-│   ├── nday.csv      # NDay (known) vulnerabilities
-│   └── zeroday.csv   # ZeroDay (unknown) vulnerabilities
-├── results/          # Experiment results (CSV outputs)
-├── src/
-│   ├── core/         # Core repair and validation logic
-│   ├── llms/         # LLM backend implementations
-│   ├── prompts/      # System prompts for repairs
-│   └── utils/        # Utility functions
-├── run.py            # Main entry point
-├── evaluation.ipynb  # Results analysis and visualization
-└── requirements.txt  # Python dependencies
-```
+
+Runs are resumable (re-invoke the same command; `-r` resets). See `python run.py --help` for all options.
+
+## data/
+
+Benchmark CSVs in a shared 10-column format (see [data/README.md](data/README.md)):
+
+- `morefixes_20cwe.csv` — full benchmark: 10 languages × the 20 CWEs common to all of them, mined from MoreFixes v3
+- `nday_plus.csv` — known split (CVEs disclosed ≤ 2025-08-31, the shared model cutoff)
+- `zeroday_plus.csv` — leakage-controlled split (CVEs disclosed after the cutoff)
+- `depth_sample.csv` — stratified 1,280-instance sample for the 128-combination depth sweep
+
+## results/
+
+Result CSVs, one per `<dataset>_<model>.csv`:
+
+- `breadth/` — 11-combination sweep over the full benchmark (4 models × both splits)
+- `full/` — 128-combination depth sweep on `depth_sample.csv`
+- `prompting/` — zero-shot / few-shot / CoT comparison
